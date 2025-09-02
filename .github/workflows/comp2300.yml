@@ -1,19 +1,10 @@
 name: comp2300-pipeline
-
-on:
-  push:
-  pull_request:
-
-# 统一保留 artifacts 7 天，可按需调整
-defaults:
-  run:
-    shell: bash
+on: [push, pull_request]
 
 jobs:
-  file-main:
-    name: file:main (filecheck)
+  file_main:
+    name: "file:main (filecheck)"
     runs-on: ubuntu-latest
-    # 直接使用课程镜像，里面自带 /scripts/validate.py 等工具
     container:
       image: comp23002024/comp2300-microbit-test:latest
     steps:
@@ -23,41 +14,40 @@ jobs:
           fetch-depth: 1
 
       - name: Validate src/main.S exists
-        run: |
-          python3 /scripts/validate.py exists src/main.S
+        run: python3 /scripts/validate.py exists src/main.S
 
       - name: Validate src/main.S differs from reference
+        run: python3 /scripts/validate.py different src/main.S -F /data/base/a2/main.S
+
+  build_main:
+    name: "build:main (build)"
+    runs-on: ubuntu-latest
+    needs: [file_main]
+    container:
+      image: comp23002024/comp2300-microbit-test:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build with make
         run: |
-          python3 /scripts/validate.py different src/main.S -F /data/base/a2/main.S
+          make ARM_PREFIX="" CC=arm-none-eabi-gcc LD=arm-none-eabi-ld OBJCOPY=arm-none-eabi-objcopy
 
-  build-main:
-  name: build:main (build)
-  runs-on: ubuntu-latest
-  needs: [file-main]
-  container:
-    image: comp23002024/comp2300-microbit-test:latest
-  steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
-
-    - name: Build with make
-      run: |
-        make \
-          ARM_PREFIX="" \
-          CC=arm-none-eabi-gcc \
-          LD=arm-none-eabi-ld \
-          OBJCOPY=arm-none-eabi-objcopy
-
-
-
-
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            program.elf
+            program.bin
+          if-no-files-found: ignore
 
   report:
-    name: report (filecheck)
+    name: "report (filecheck)"
     runs-on: ubuntu-latest
-    needs: [statement-of-originality]
+    needs: [file_main]
     container:
       image: comp23002024/comp2300-microbit-test:latest
     steps:
@@ -69,13 +59,12 @@ jobs:
       - name: Validate report.md
         run: |
           python3 /scripts/validate.py exists report.md
-          # 按作业要求校验字数；最后一个参数是作业名目录
           python3 /scripts/validate.py word-count report.md assignment-2
 
   pdf:
-    name: pdf (render)
+    name: "pdf (render)"
     runs-on: ubuntu-latest
-    needs: [statement-of-originality]  # 原 CI 里 pdf 依赖 statement-of-originality 的 artifacts
+    needs: [report]
     container:
       image: comp23002024/comp2300-md2pdf:latest
     env:
@@ -98,8 +87,6 @@ jobs:
       - name: Echo ENV Vars
         run: |
           echo "$PDF_NAME"
-          echo "$STUDENT_NAME"
-          echo "$STUDENT_UID"
           echo "REFERENCES:"
           cat references.md || true
 
