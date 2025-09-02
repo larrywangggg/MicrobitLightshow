@@ -1,0 +1,163 @@
+name: comp2300-pipeline
+
+on:
+  push:
+  pull_request:
+
+# 统一保留 artifacts 7 天，可按需调整
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  file-main:
+    name: file:main (filecheck)
+    runs-on: ubuntu-latest
+    # 直接使用课程镜像，里面自带 /scripts/validate.py 等工具
+    container:
+      image: comp23002024/comp2300-microbit-test:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validate src/main.S exists
+        run: |
+          python3 /scripts/validate.py exists src/main.S
+
+      - name: Validate src/main.S differs from reference
+        run: |
+          python3 /scripts/validate.py different src/main.S -F /data/base/a2/main.S
+
+  build-main:
+    name: build:main (build)
+    runs-on: ubuntu-latest
+    needs: [file-main]
+    container:
+      image: comp23002024/comp2300-microbit-test:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build with make
+        run: |
+          make
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            program.elf
+            program.bin
+          if-no-files-found: ignore
+
+  statement-of-originality:
+    name: statement-of-originality (filecheck)
+    runs-on: ubuntu-latest
+    needs: [file-main]
+    container:
+      image: comp23002024/comp2300-microbit-test:latest
+    env:
+      # GitLab 里 dotenv: student.env，这里手动读取并导入
+      # 如果你想用 GitHub Secrets，也可改用 env: + secrets
+      DOTENV_FILE: student.env
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Load student.env if present
+        run: |
+          if [[ -f "$DOTENV_FILE" ]]; then
+            # 过滤注释行并 export
+            set -o allexport
+            grep -v '^\s*#' "$DOTENV_FILE" | xargs -d '\n' -I {} bash -c 'export "{}"'
+            set +o allexport
+          fi
+
+      - name: Prepare data/ and copy md2pdf configs & script
+        run: |
+          set -e
+          RES=0
+          mkdir -p data/
+          cp /data/md2pdf-config.json data/md2pdf-config.json
+          cp /data/md2pdf-style.css  data/md2pdf-style.css
+          cp /data/generate_report_a2.sh data/generate_report_a2.sh
+
+      - name: Validate statement-of-originality.md
+        run: |
+          python3 /scripts/validate.py get-student statement-of-originality.md
+          python3 /scripts/validate.py get-content statement-of-originality.md -C references.md
+          python3 /scripts/validate.py schema ./statement-of-originality.md https://comp.anu.edu.au/courses/comp2300/schemas/statement-of-originality.schema.json
+          python3 /scripts/validate.py different references.md -F /data/base/checkpoint1/references.md || RES=$?
+          if [[ "$RES" == "0" ]]; then
+            echo "You haven't updated the 'References' section of your statement of originality."
+            echo "If you are certain there is nothing you need to add, remove the default value."
+            exit 1
+          fi
+
+  report:
+    name: report (filecheck)
+    runs-on: ubuntu-latest
+    needs: [statement-of-originality]
+    container:
+      image: comp23002024/comp2300-microbit-test:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validate report.md
+        run: |
+          python3 /scripts/validate.py exists report.md
+          # 按作业要求校验字数；最后一个参数是作业名目录
+          python3 /scripts/validate.py word-count report.md assignment-2
+
+  pdf:
+    name: pdf (render)
+    runs-on: ubuntu-latest
+    needs: [statement-of-originality]  # 原 CI 里 pdf 依赖 statement-of-originality 的 artifacts
+    container:
+      image: comp23002024/comp2300-md2pdf:latest
+    env:
+      PDF_NAME: assignment-2.pdf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: List files
+        run: ls -la
+
+      - name: Create placeholder files if missing
+        run: |
+          touch references.md
+          mkdir -p src
+          touch src/main.S
+
+      - name: Echo ENV Vars
+        run: |
+          echo "$PDF_NAME"
+          echo "$STUDENT_NAME"
+          echo "$STUDENT_UID"
+          echo "REFERENCES:"
+          cat references.md || true
+
+      - name: Generate PDF
+        run: |
+          chmod +x /data/generate_report_a2.sh || true
+          /data/generate_report_a2.sh
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: assignment-2-pdf
+          path: ${{ env.PDF_NAME }}
+          if-no-files-found: error
