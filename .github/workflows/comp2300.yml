@@ -12,6 +12,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      
+      - name: Install ARM toolchain & OpenOCD
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi \
+                                  libnewlib-arm-none-eabi openocd make
+
+      - name: Build with make
+        run: |
+          make ARM_PREFIX="" CC=arm-none-eabi-gcc LD=arm-none-eabi-ld OBJCOPY=arm-none-eabi-objcopy
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            program.elf
+            program.bin
 
       - name: Validate src/main.S exists
         run: python3 /scripts/validate.py exists src/main.S
@@ -61,43 +79,3 @@ jobs:
           python3 /scripts/validate.py exists README.md
           python3 /scripts/validate.py word-count README.md assignment-2
 
-  pdf:
-    name: "pdf (render)"
-    runs-on: ubuntu-latest
-    needs: [report]
-    container:
-      image: comp23002024/comp2300-md2pdf:latest
-    env:
-      PDF_NAME: assignment-2.pdf
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: List files
-        run: ls -la
-
-      - name: Create placeholder files if missing
-        run: |
-          touch references.md
-          mkdir -p src
-          touch src/main.S
-
-      - name: Echo ENV Vars
-        run: |
-          echo "$PDF_NAME"
-          echo "REFERENCES:"
-          cat references.md || true
-
-      - name: Generate PDF
-        run: |
-          chmod +x /data/generate_report_a2.sh || true
-          /data/generate_report_a2.sh
-
-      - name: Upload PDF artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: assignment-2-pdf
-          path: ${{ env.PDF_NAME }}
-          if-no-files-found: error
