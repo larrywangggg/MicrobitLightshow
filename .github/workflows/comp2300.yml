@@ -56,10 +56,10 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Validate report.md
+      - name: Validate README.md
         run: |
-          python3 /scripts/validate.py exists report.md
-          python3 /scripts/validate.py word-count report.md assignment-2
+          python3 /scripts/validate.py exists README.md
+          python3 /scripts/validate.py word-count README.md assignment-2
 
   pdf:
     name: "pdf (render)"
